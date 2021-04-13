@@ -3,14 +3,16 @@ package scala.android.plugin;
 import com.android.build.gradle.*;
 import com.android.build.gradle.api.BaseVariant;
 import com.android.build.gradle.api.SourceKind;
+import com.android.build.gradle.internal.CompileOptions;
 import com.android.build.gradle.internal.plugins.BasePlugin;
-import org.gradle.api.GradleException;
-import org.gradle.api.InvalidUserCodeException;
-import org.gradle.api.Plugin;
-import org.gradle.api.Project;
+import com.android.builder.model.SourceProvider;
+import org.gradle.api.*;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.attributes.AttributeMatchingStrategy;
 import org.gradle.api.attributes.Usage;
 import org.gradle.api.file.FileCollection;
+import org.gradle.api.file.SourceDirectorySet;
 import org.gradle.api.internal.HasConvention;
 import org.gradle.api.internal.artifacts.configurations.ConfigurationInternal;
 import org.gradle.api.internal.tasks.DefaultScalaSourceSet;
@@ -21,6 +23,8 @@ import org.gradle.api.plugins.scala.ScalaBasePlugin;
 import org.gradle.api.plugins.scala.ScalaPluginExtension;
 import org.gradle.api.tasks.ScalaRuntime;
 import org.gradle.api.tasks.ScalaSourceSet;
+import org.gradle.api.tasks.compile.JavaCompile;
+import org.gradle.api.tasks.scala.IncrementalCompileOptions;
 import org.gradle.api.tasks.scala.ScalaCompile;
 import org.gradle.api.tasks.scala.ScalaCompileOptions;
 import org.gradle.internal.reflect.Instantiator;
@@ -31,6 +35,7 @@ import javax.inject.Inject;
 import java.io.File;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -58,24 +63,24 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
     }
 
     public void apply(Project project) {
-        var scalaRuntime = project.getExtensions().create("scalaRuntime", AndroidScalaRuntime.class, project);
+        AndroidScalaRuntime scalaRuntime = project.getExtensions().create("scalaRuntime", AndroidScalaRuntime.class, project);
 
-        var scalaPluginExtension = project.getExtensions().create(ScalaPluginExtension.class, "scala", DefaultScalaPluginExtension.class);
-        var incrementalAnalysisUsage = objectFactory.named(Usage.class, "incremental-analysis");
+        ScalaPluginExtension scalaPluginExtension = project.getExtensions().create(ScalaPluginExtension.class, "scala", DefaultScalaPluginExtension.class);
+        Usage incrementalAnalysisUsage = objectFactory.named(Usage.class, "increme            incrementalOptions.getClassfileBackupDir().set(\nntal-analysis");
 
         configureConfigurations(project, incrementalAnalysisUsage, scalaPluginExtension);
         configureCompileDefaults(project, scalaRuntime);
 
-        var androidPlugin = findBasePlugin(project);
+        BasePlugin androidPlugin = findBasePlugin(project);
 
         LOGGER.debug("Found Plugin: {}", androidPlugin);
 
-        var androidExt = (BaseExtension) project.getExtensions().getByName("android");
+        BaseExtension androidExt = (BaseExtension) project.getExtensions().getByName("android");
 
         androidExt.getSourceSets().all(sourceSet -> {
             if (sourceSet instanceof HasConvention) {
-                var sourceSetName = sourceSet.getName();
-                var sourceSetPath = project.file("src/" + sourceSetName + "/scala");
+                String sourceSetName = sourceSet.getName();
+                File sourceSetPath = project.file("src/" + sourceSetName + "/scala");
 
                 if (!sourceSetPath.exists()) {
                     LOGGER.debug("SourceSet path does not exists for {} {}", sourceSet.getName(), sourceSetPath);
@@ -84,10 +89,10 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
 
                 sourceSet.getJava().srcDir(sourceSetPath);
 
-                var scalaSourceSet = new DefaultScalaSourceSet(sourceSetName, objectFactory);
+                DefaultScalaSourceSet scalaSourceSet = new DefaultScalaSourceSet(sourceSetName, objectFactory);
                 ((HasConvention) sourceSet).getConvention().getPlugins().put("scala", scalaSourceSet);
 
-                var scalaDirectorySet = scalaSourceSet.getScala();
+                SourceDirectorySet scalaDirectorySet = scalaSourceSet.getScala();
                 scalaDirectorySet.srcDir(sourceSetPath);
 
                 LOGGER.debug("Created scala sourceDirectorySet at {}", scalaDirectorySet.getSrcDirs());
@@ -102,10 +107,10 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
     }
 
     private static void dependsOnIfPresent(Project project, String taskName1, String taskName2) {
-        var task1 = project.getTasks().findByPath(taskName1);
-        var task2 = project.getTasks().findByPath(taskName2);
+        Task task1 = project.getTasks().findByPath(taskName1);
+        Task task2 = project.getTasks().findByPath(taskName2);
 
-        if (task1 != null && task2!= null) {
+        if (task1 != null && task2 != null) {
             task1.dependsOn(task2);
         }
     }
@@ -115,7 +120,7 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
         int i = 0;
 
         while (i < ANDROID_PLUGIN_NAMES.size() && plugin == null) {
-            var name = ANDROID_PLUGIN_NAMES.get(i);
+            String name = ANDROID_PLUGIN_NAMES.get(i);
             plugin = project.getPlugins().findPlugin(name);
             i++;
         }
@@ -154,17 +159,17 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
             ScalaRuntime scalaRuntime,
             BaseExtension androidExtension
     ) {
-        var variantName = variantData.getName();
+        String variantName = variantData.getName();
         LOGGER.debug("Processing variant {}", variantName);
 
-        var javaTask = variantData.getJavaCompileProvider().getOrNull();
+        JavaCompile javaTask = variantData.getJavaCompileProvider().getOrNull();
         if (javaTask == null) {
             LOGGER.info("javaTask it null for {}", variantName);
             return;
         }
 
-        var taskName = javaTask.getName().replace("Java", "Scala");
-        var scalaTask = project.getTasks().create(taskName, ScalaCompile.class);
+        String taskName = javaTask.getName().replace("Java", "Scala");
+        ScalaCompile scalaTask = project.getTasks().create(taskName, ScalaCompile.class);
 
         scalaTask.setDestinationDir(javaTask.getDestinationDir());
         scalaTask.setClasspath(javaTask.getClasspath());
@@ -173,35 +178,35 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
 
         configureCompileOptions(scalaTask.getScalaCompileOptions(), androidExtension);
 
-        var zinc = project.getConfigurations().getByName("zinc");
-        var plugins = project.getConfigurations().getByName(ScalaBasePlugin.SCALA_COMPILER_PLUGINS_CONFIGURATION_NAME);
+        Configuration zinc = project.getConfigurations().getByName("zinc");
+        Configuration plugins = project.getConfigurations().getByName(ScalaBasePlugin.SCALA_COMPILER_PLUGINS_CONFIGURATION_NAME);
 
         scalaTask.setScalaCompilerPlugins(plugins.getAsFileTree());
         scalaTask.setZincClasspath(zinc.getAsFileTree());
 
         LOGGER.debug("scala sources for {}: {}", variantName, scalaTask.getSource().getFiles());
 
-        var additionalSourceFiles = variantData.getSourceFolders(SourceKind.JAVA)
+        File[] additionalSourceFiles = variantData.getSourceFolders(SourceKind.JAVA)
                 .stream()
                 .map(files -> files.getDir())
-                .toArray();
+                .toArray(File[]::new);
 
-        LOGGER.debug("additional source files found at {}", additionalSourceFiles);
+        LOGGER.debug("additional source files found at {}", (Object[]) additionalSourceFiles);
 
-        var providers = variantData.getSourceSets();
+        List<SourceProvider> providers = variantData.getSourceSets();
 
         providers.forEach(provider -> {
             if (provider instanceof HasConvention) {
-                var hasConvention = (HasConvention) provider;
+                HasConvention hasConvention = (HasConvention) provider;
 
-                var scalaSourceSet = (ScalaSourceSet) hasConvention.getConvention().getPlugins().get("scala");
+                ScalaSourceSet scalaSourceSet = (ScalaSourceSet) hasConvention.getConvention().getPlugins().get("scala");
                 if (scalaSourceSet != null) {
-                    var allFiles = scalaSourceSet.getScala()
-                            .plus(project.getLayout().files(additionalSourceFiles));
+                    FileCollection allFiles = scalaSourceSet.getScala()
+                            .plus(project.getLayout().files((Object[]) additionalSourceFiles));
 
                     scalaTask.setSource(allFiles);
 
-                    var scalaFiles = scalaSourceSet.getScala().getFiles().stream()
+                    Set<String> scalaFiles = scalaSourceSet.getScala().getFiles().stream()
                             .map(File::getAbsolutePath)
                             .collect(Collectors.toSet());
 
@@ -217,14 +222,13 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
         }
 
         scalaTask.doFirst(task -> {
-            var runtimeJars =
-                    project.getLayout().files(androidExtension.getBootClasspath().toArray())
-                            .plus(javaTask.getClasspath());
+            FileCollection runtimeJars = project.getLayout().files(androidExtension.getBootClasspath().toArray())
+                    .plus(javaTask.getClasspath());
 
             scalaTask.setClasspath(runtimeJars);
             scalaTask.getOptions().setAnnotationProcessorPath(javaTask.getOptions().getAnnotationProcessorPath());
 
-            var incrementalOptions = scalaTask.getScalaCompileOptions().getIncrementalOptions();
+            IncrementalCompileOptions incrementalOptions = scalaTask.getScalaCompileOptions().getIncrementalOptions();
             incrementalOptions.getAnalysisFile().set(
                     project.getLayout().getBuildDirectory().file("tmp/scala/compilerAnalysis/" + scalaTask.getName() + ".analysis")
             );
@@ -242,9 +246,9 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
     }
 
     private static void configureCompileOptions(ScalaCompileOptions scalaCompileOptions, BaseExtension androidExtension) {
-        var compileOptions = androidExtension.getCompileOptions();
+        CompileOptions compileOptions = androidExtension.getCompileOptions();
 
-        var javaVersion =  TargetVersionDetector.javaVersion(scalaCompileOptions.getAdditionalParameters());
+        JavaVersion javaVersion = TargetVersionDetector.javaVersion(scalaCompileOptions.getAdditionalParameters());
         LOGGER.info("Detect target platform version {}", javaVersion);
 
         if (compileOptions.getTargetCompatibility().compareTo(javaVersion) < 0) {
@@ -280,14 +284,14 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
     }
 
     private void configureConfigurations(final Project project, final Usage incrementalAnalysisUsage, ScalaPluginExtension scalaPluginExtension) {
-        var dependencyHandler = project.getDependencies();
+        DependencyHandler dependencyHandler = project.getDependencies();
 
-        var plugins = (ConfigurationInternal) project.getConfigurations().create(ScalaBasePlugin.SCALA_COMPILER_PLUGINS_CONFIGURATION_NAME);
+        ConfigurationInternal plugins = (ConfigurationInternal) project.getConfigurations().create(ScalaBasePlugin.SCALA_COMPILER_PLUGINS_CONFIGURATION_NAME);
         plugins.setTransitive(false);
         plugins.setCanBeConsumed(false);
         JvmPluginsHelper.configureAttributesForRuntimeClasspath(plugins, this.objectFactory);
 
-        var zinc = project.getConfigurations().create("zinc");
+        Configuration zinc = project.getConfigurations().create("zinc");
         zinc.setVisible(false);
         zinc.setDescription("The Zinc incremental compiler to be used for this Scala project.");
 
@@ -311,14 +315,14 @@ public class ScalaAndroidPlugin implements Plugin<Project> {
             }));
         });
 
-        var incrementalAnalysisElements = project.getConfigurations().create("incrementalScalaAnalysisElements");
+        Configuration incrementalAnalysisElements = project.getConfigurations().create("incrementalScalaAnalysisElements");
         incrementalAnalysisElements.setVisible(false);
         incrementalAnalysisElements.setDescription("Incremental compilation analysis files");
         incrementalAnalysisElements.setCanBeResolved(false);
         incrementalAnalysisElements.setCanBeConsumed(true);
         incrementalAnalysisElements.getAttributes().attribute(USAGE_ATTRIBUTE, incrementalAnalysisUsage);
 
-        var matchingStrategy = dependencyHandler.getAttributesSchema().attribute(USAGE_ATTRIBUTE);
+        AttributeMatchingStrategy<Usage> matchingStrategy = dependencyHandler.getAttributesSchema().attribute(USAGE_ATTRIBUTE);
         matchingStrategy.getDisambiguationRules().add(UsageDisambiguationRules.class, actionConfiguration -> {
             actionConfiguration.params(incrementalAnalysisUsage);
             actionConfiguration.params(objectFactory.named(Usage.class, Usage.JAVA_API));

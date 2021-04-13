@@ -12,11 +12,11 @@ class TargetVersionDetector {
     }
 
     private static JavaVersion detect(String target) {
-        var splitVal = target.split(":");
+        String[] splitVal = target.split(":");
         if (splitVal.length < 2) {
             return JavaVersion.VERSION_1_8;
         } else {
-            var ver = splitVal[1];
+            String ver = splitVal[1];
             return JavaVersion.toVersion(ver);
         }
     }
